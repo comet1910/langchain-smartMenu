@@ -19,6 +19,7 @@ root_path = Path(__file__).parent.parent
 embeddings = None
 milvus_client = None
 engine = None
+agent = None
 
 #创建连接池
 def postgres_connection():
@@ -181,23 +182,58 @@ def make_reservation(num_people:int,num_children:int,arrival_time:str,seat_prefe
 
 
 async def create_agent():
+    global agent
+    if agent is  None:
+        from pathlib import Path
+        from langchain.agents import create_agent
+        from langchain_openai import ChatOpenAI
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+        from langgraph.checkpoint.memory import InMemorySaver
+        # from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        import sqlite3
 
-    from pathlib import Path
-    from langchain.agents import create_agent
-    from langchain_openai import ChatOpenAI
+        checkpointer = InMemorySaver()
 
-    llm = ChatOpenAI()
-    with open(str(root_path / 'agent'/'prompts'/'system_prompts.txt')) as f:
-        system_prompt = f.read()
 
-    agent = create_agent(
-        model=llm,
-        system_prompt=system_prompt,
-        tools=[]
-    )
 
+        # client = MultiServerMCPClient(
+        #     connections={
+        #         "amap-mpas":{
+        #             "transport":"sse",
+        #             "url":"http://localhost:83000/v1/chat/completions"
+        #         }
+        #     }
+        # )
+
+        llm = ChatOpenAI(
+            model=os.getenv("MODEL_NAME", "deepseek-v4-flash"),
+            base_url=os.getenv("LLM_BASE_URL"),
+            api_key=os.getenv("LLM_API_KEY"),
+        )
+        with open(str(root_path / 'agent'/'prompts'/'system_prompt.txt'),encoding="utf-8",mode="r") as f:
+            system_prompt = f.read()
+
+        # mcp_tools = await client.get_tools()
+
+        agent = create_agent(
+            model=llm,
+            system_prompt=system_prompt,
+            # tools=[make_reservation,user_flavor_search,search_main_dishes]+mcp_tools,
+            #未使用mcp的tools
+            tools=[make_reservation,user_flavor_search,search_main_dishes],
+            checkpointer=checkpointer
+        )
+    return agent
+
+async def test_agent():
+    agent = await create_agent()
+    config = {"configurable":{"thread_id":"123"}}
+    res = agent.invoke({"messages":[{"role":"user","content":"你能帮我做什么"}]}, config=config)
+    print(res["messages"][-1].content)
 
 if __name__ == '__main__':
-    res = make_reservation.invoke({"num_people":4,"num_children":2,"arrival_time":"2023-12-12 18:00","seat_preference":"","main_dish_preference":"","comment":""})
-    print(res)
+    # res = make_reservation.invoke({"num_people":4,"num_children":2,"arrival_time":"2023-12-12 18:00","seat_preference":"","main_dish_preference":"","comment":""})
+    # print(res)
+    import asyncio
+    asyncio.run(test_agent())
 
