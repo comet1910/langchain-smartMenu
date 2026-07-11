@@ -3,6 +3,7 @@ agent助手代码
 """
 
 
+from email import message
 from pathlib import Path
 
 from langchain.tools import tool
@@ -180,6 +181,35 @@ def make_reservation(num_people:int,num_children:int,arrival_time:str,seat_prefe
        conn.commit()
        return "预约成功"
 
+async def assistant_query(user_query:str):
+    """
+    接收来自前端的用户query，使用agent进行回复
+    """
+    agent = await create_agent()
+    #1、调用前，新添加一个 system pormpt,让agent感知当前的时间
+    from datetime import datetime
+    from langchain.messages import ToolMessage
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    time_system_prompt = {"role":"system","content":f"当前日期是{current_date}"}
+
+    #2、构建config，生成环境中，用户每次会话，都有一个session_id 
+    config = {"configurable":{"thread_id":"123"}}
+    # res = await agent.ainvoke({"messages":[time_system_prompt,{"role":"user","content":user_query}]}, config=config)
+
+    #3、调用agent，流式输出
+    async for chunk in agent.astream({"messages":[time_system_prompt,{"role":"user","content":user_query}]}, config=config,stream_mode="messages"):
+        message = chunk[0]
+        # 过滤掉工具调用的消息
+        if type(message) == ToolMessage:
+            continue
+        #message 需要通过接口的方式给到前端
+        #使用SSE将message发送给前端
+        #SSE的数据结构：data: {"type":"token","content":"你好"}
+        import json
+        payload = {"content":message.content,"type":"token"}
+        payload_str = json.dumps(payload,ensure_ascii=False)
+        yield f"data: {payload_str}\n\n"
+
 
 async def create_agent():
     global agent
@@ -228,7 +258,7 @@ async def create_agent():
 async def test_agent():
     agent = await create_agent()
     config = {"configurable":{"thread_id":"123"}}
-    res = agent.invoke({"messages":[{"role":"user","content":"你能帮我做什么"}]}, config=config)
+    res = await agent.ainvoke({"messages":[{"role":"user","content":"你能帮我做什么"}]}, config=config)
     print(res["messages"][-1].content)
 
 if __name__ == '__main__':

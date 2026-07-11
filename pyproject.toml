@@ -10,4 +10,12 @@ dependencies = [
     "pymysql",
     "psycopg2-binary",
     "python-dotenv",
+    "pymilvus>=3.0.0",
+    "some-package>=0.1",
+    "sentence-transformers>=5.6.0",
+    "langchain-huggingface>=1.2.2",
+    "sqlalchemy>=2.0.51",
+    "langchain-mcp-adapters>=0.3.0",
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.139.0",
 ]
