@@ -10,6 +10,7 @@ from langchain.tools import tool
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
+from pydantic import BaseModel,Field
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,6 +18,18 @@ load_dotenv()
 root_path = Path(__file__).parent.parent
 embeddings = None
 milvus_client = None
+engine = None
+
+#创建连接池
+def postgres_connection():
+    global engine
+    if engine is None:
+        from sqlalchemy import create_engine
+        engine = create_engine(
+            url = f"postgresql+psycopg2://{os.getenv('POSTGRES_USERNAME')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT', 5432)}/{os.getenv('POSTGRES_DATABASE', 'postgres')}",
+            pool_size=15
+        )
+    return engine
 
 @tool
 def search_main_dishes():
@@ -92,6 +105,9 @@ def get_milvus_client():
         )
     return milvus_client
 
+
+
+#查找菜品工具
 @tool
 def user_flavor_search(user_query:str):
     """
@@ -127,6 +143,42 @@ def user_flavor_search(user_query:str):
     else:
         return "在当前库中没有符合用户喜好的菜品"
 
+class ReservationToolArgsInfo(BaseModel):
+    num_people:int = Field(description="就餐人数")
+    num_children:int = Field(description="预约的0-2岁儿童人数")
+    arrival_time:str = Field(description="到达时间，格式为YYYY-MM-DD HH:MM")
+    seat_preference:str = Field(description="座位偏好，没有时为空字符串")
+    main_dish_preference:str = Field(description="主菜偏好，没有时为空字符串")
+    comment:str = Field(description="备注，没有时为空字符串")
+
+
+
+#预定工具
+@tool(args_schema=ReservationToolArgsInfo)
+def make_reservation(num_people:int,num_children:int,arrival_time:str,seat_preference:str,main_dish_preference:str,comment:str):
+    """
+    用来进行餐厅预订的工具
+    向数据库写入数据
+    """
+    from sqlalchemy import text
+    engine = postgres_connection()
+    with engine.connect() as conn:
+       sql = """
+         INSERT INTO reservation_order(num_people, num_children, arrival_time, seat_preference, main_dish_preference, other_comments)
+         VALUES (:num_people, :num_children, :arrival_time, :seat_preference, :main_dish_preference, :other_comments)
+       """
+       param_dict = {
+           "num_people":num_people,
+           "num_children":num_children,
+           "arrival_time":arrival_time,
+           "seat_preference":seat_preference,
+           "main_dish_preference":main_dish_preference,
+           "other_comments":comment
+       }
+       conn.execute(statement = text(sql),parameters=param_dict)
+       conn.commit()
+       return "预约成功"
+
 
 async def create_agent():
 
@@ -146,6 +198,6 @@ async def create_agent():
 
 
 if __name__ == '__main__':
-    res = user_flavor_search.invoke({"user_query":"清淡的食物"})
+    res = make_reservation.invoke({"num_people":4,"num_children":2,"arrival_time":"2023-12-12 18:00","seat_preference":"","main_dish_preference":"","comment":""})
     print(res)
 
