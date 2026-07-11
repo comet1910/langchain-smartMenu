@@ -1,18 +1,22 @@
 """
 agent助手代码
 """
-import json
-from multiprocessing import Value
+
+
+from pathlib import Path
 
 from langchain.tools import tool
-import pymysql
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
+
 from dotenv import load_dotenv
 load_dotenv()
 
-
+root_path = Path(__file__).parent.parent
+embeddings = None
+milvus_client = None
 
 @tool
 def search_main_dishes():
@@ -71,13 +75,65 @@ def search_main_dishes():
             return json_results
 
 
+def get_embeddings():
+    global embeddings
+    if embeddings is None:
+        from langchain_huggingface import HuggingFaceEmbeddings
+        embeddings = HuggingFaceEmbeddings(model= str(root_path / "models"/"bge-m3"))
+    return embeddings
+
+def get_milvus_client():
+    global milvus_client
+    if milvus_client is None:
+        from pymilvus import MilvusClient
+        milvus_client = MilvusClient(
+            uri=os.getenv("MILVUS_URI"),
+            token=os.getenv("MILVUS_TOKEN")
+        )
+    return milvus_client
+
+@tool
+def user_flavor_search(user_query:str):
+    """
+    基于用户口味，查找相关的菜品
+    """
+    #1、构建用户query的向量,使用本地的bge-m3
+    embeddings = get_embeddings()
+    query_vector = embeddings.embed_query(user_query)
+
+    #2、连接milvus ，进行向量检索
+    client = get_milvus_client()
+
+    #3、进行向量检索
+    search_res = client.search(
+        collection_name="menu_items",
+        data = [query_vector],
+        anns_field="vector",
+        output_fields=["text"],
+        limit = 3
+    )
+
+    #4、解析搜索结果
+    if search_res:
+        all_results = search_res[0]
+
+        final_result = []
+
+        for item in all_results:
+            item_str = item["entity"]["text"]
+            final_result.append(item_str)
+
+        return final_result
+    else:
+        return "在当前库中没有符合用户喜好的菜品"
+
 
 async def create_agent():
 
     from pathlib import Path
     from langchain.agents import create_agent
     from langchain_openai import ChatOpenAI
-    root_path = Path(__file__).parent.parent
+
     llm = ChatOpenAI()
     with open(str(root_path / 'agent'/'prompts'/'system_prompts.txt')) as f:
         system_prompt = f.read()
@@ -90,6 +146,6 @@ async def create_agent():
 
 
 if __name__ == '__main__':
-    res = search_main_dishes.invoke({})
+    res = user_flavor_search.invoke({"user_query":"清淡的食物"})
     print(res)
 
